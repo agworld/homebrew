@@ -8,8 +8,16 @@ class Pathname
     sources.each do |src|
       case src
       when Array
+        if src.empty?
+          opoo "tried to install empty array to #{self}"
+          return []
+        end
         src.each {|s| results << install_p(s) }
       when Hash
+        if src.empty?
+          opoo "tried to install empty hash to #{self}"
+          return []
+        end
         src.each {|s, new_basename| results << install_p(s, new_basename) }
       else
         results << install_p(src)
@@ -111,7 +119,6 @@ class Pathname
   # extended to support common double extensions
   def extname
     return $1 if to_s =~ bottle_regex
-    # old brew bottle style
     return $1 if to_s =~ old_bottle_regex
     /(\.(tar|cpio)\.(gz|bz2|xz|Z))$/.match to_s
     return $1 if $1
@@ -206,8 +213,10 @@ class Pathname
     return $1 if $1
 
     # eg. foobar4.5.1
-    /((\d+\.)*\d+)$/.match stem
-    return $1 if $1
+    unless /^erlang-/.match basename
+      /((\d+\.)*\d+)$/.match stem
+      return $1 if $1
+    end
 
     # eg foobar-4.5.0-bin
     /-((\d+\.)+\d+[abc]?)[-._](bin|dist|stable|src|sources?)$/.match stem
@@ -283,9 +292,26 @@ class Pathname
     self.dirname.mkpath
     Dir.chdir self.dirname do
       # NOTE only system ln -s will create RELATIVE symlinks
-      system 'ln', '-s', src.relative_path_from(self.dirname), self.basename
-      # ln outputs useful error message for us
-      raise "Could not create symlink: #{to_s}." unless $?.success?
+      quiet_system 'ln', '-s', src.relative_path_from(self.dirname), self.basename
+      if not $?.success?
+        if self.exist?
+          raise <<-EOS.undent
+            Could not symlink file: #{src.expand_path}
+            Target #{self} already exists. You may need to delete it.
+            EOS
+        elsif !dirname.writable?
+          raise <<-EOS.undent
+            Could not symlink file: #{src.expand_path}
+            #{dirname} is not writable. You should change its permissions.
+            EOS
+        else
+          raise <<-EOS.undent
+            Could not symlink file: #{src.expand_path}
+            #{self} may already exist.
+            #{dirname} may not be writable.
+            EOS
+        end
+      end
     end
   end
 
@@ -368,7 +394,6 @@ module ObserverPathnameExtension
   end
   def make_relative_symlink src
     super
-    puts "ln #{to_s}" if ARGV.verbose?
     $n+=1
   end
   def install_info
